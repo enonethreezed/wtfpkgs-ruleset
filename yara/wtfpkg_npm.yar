@@ -4,40 +4,38 @@
  * Techniques covered:
  *   NPM-02  lifecycle script abuse (preinstall / postinstall)
  *   NPM-03  .npmrc manipulation
- *   NPM-04  npx remote execution
  *
  * References: https://github.com/0xv1n/WTFpkg
  * Author: wtfpkg-rules
  * Date: 2026-05-31
  * License: MIT
+ *
+ * Changes vs initial release:
+ *   - wtfpkg_npm_npmrc_suspicious_registry: removed tautological `#reg_directive >= 1`
+ *     inner condition (the outer `$reg_directive` already guarantees count >= 1)
+ *   - Metadata: added id, modified, score, quality, tags; removed non-standard fields;
+ *     reordered to YARA Forge canonical order
  */
 
-/*
- * Detects package.json files that define lifecycle scripts containing
- * network access or shell execution. Requires BOTH a lifecycle hook key
- * AND a suspicious command pattern — avoids flagging every package with
- * a "build" or "test" script.
- */
 rule wtfpkg_npm_lifecycle_script_network_exec
 {
     meta:
-        description     = "package.json lifecycle script contains network download or shell execution"
-        author          = "wtfpkg-rules"
-        date            = "2026-05-31"
-        version         = "1.0"
-        reference       = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/npm-lifecycle-scripts.md"
-        technique       = "NPM-02"
-        severity        = "high"
-        mitre_attack    = "T1195.001, T1059.004"
+        description  = "package.json lifecycle script contains network download or shell execution"
+        author       = "wtfpkg-rules"
+        id           = "d37dd8de-e4ee-4afd-a244-47f25bee4186"
+        date         = "2026-05-31"
+        modified     = "2026-05-31"
+        reference    = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/npm-lifecycle-scripts.md"
+        score        = 75
+        quality      = 75
+        tags         = "SUPPLY_CHAIN, T1195_001, T1059_004, T1059_007, NPM, NODEJS"
 
     strings:
-        // Lifecycle hooks that execute during npm install
         $hook_preinst   = "\"preinstall\"" ascii
         $hook_postinst  = "\"postinstall\"" ascii
         $hook_install   = "\"install\"" ascii
         $hook_prepare   = "\"prepare\"" ascii
 
-        // Network and shell execution patterns in script values
         $cmd_curl       = "curl " ascii
         $cmd_wget       = "wget " ascii
         $cmd_nc         = " nc " ascii
@@ -47,13 +45,11 @@ rule wtfpkg_npm_lifecycle_script_network_exec
         $cmd_b64        = "base64" ascii
         $cmd_eval       = "eval $(" ascii
         $cmd_eval2      = "eval \"$(" ascii
-        // Node-based network (often used in malicious postinstall)
         $js_require_net = "require('net')" ascii
         $js_require_net2= "require(\"net\")" ascii
         $js_https_get   = "https.get(" ascii
         $js_http_get    = "http.get(" ascii
 
-        // package.json structure anchor
         $pkg_name       = "\"name\":" ascii
         $pkg_version    = "\"version\":" ascii
 
@@ -67,39 +63,32 @@ rule wtfpkg_npm_lifecycle_script_network_exec
 }
 
 
-/*
- * Detects package.json postinstall/preinstall scripts that include
- * credential-harvesting patterns: reading process.env for known secret keys
- * and pairing with outbound HTTP/HTTPS calls.
- */
 rule wtfpkg_npm_lifecycle_credential_exfil
 {
     meta:
-        description     = "package.json script reads credential env vars and makes outbound connection"
-        author          = "wtfpkg-rules"
-        date            = "2026-05-31"
-        version         = "1.0"
-        reference       = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/npm-lifecycle-scripts.md"
-        technique       = "NPM-02"
-        severity        = "critical"
-        mitre_attack    = "T1195.001, T1552.001"
+        description  = "package.json script reads credential env vars and makes outbound connection"
+        author       = "wtfpkg-rules"
+        id           = "50d04fb8-f7fb-453e-bbe1-ee24a22219ff"
+        date         = "2026-05-31"
+        modified     = "2026-05-31"
+        reference    = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/npm-lifecycle-scripts.md"
+        score        = 80
+        quality      = 75
+        tags         = "SUPPLY_CHAIN, T1195_001, T1552_001, NPM, NODEJS, CREDENTIAL_EXFIL"
 
     strings:
-        // Credential env vars
         $env_aws        = "AWS_SECRET" ascii nocase
         $env_npm        = "NPM_TOKEN" ascii nocase
         $env_gh         = "GITHUB_TOKEN" ascii nocase
         $env_ci         = "CI_TOKEN" ascii nocase
         $env_proc       = "process.env" ascii
 
-        // Network exfiltration
         $net_fetch      = "fetch(" ascii
         $net_xhr        = "XMLHttpRequest" ascii
         $net_http_req   = "http.request(" ascii
         $net_https_req  = "https.request(" ascii
         $net_axios      = "axios.post(" ascii
 
-        // package.json context
         $hook_postinst  = "\"postinstall\"" ascii
         $hook_preinst   = "\"preinstall\"" ascii
 
@@ -111,39 +100,29 @@ rule wtfpkg_npm_lifecycle_credential_exfil
 }
 
 
-/*
- * Detects .npmrc files that contain a registry directive pointing to
- * a non-canonical host (not registry.npmjs.org / npm.pkg.github.com).
- * The rule requires the registry key AND an external URL without the
- * known-legitimate registries to minimize false positives from legitimate
- * Artifactory / Nexus private registry configurations.
- *
- * NOTE: Legitimate private registries should be allowlisted per-org.
- */
 rule wtfpkg_npm_npmrc_suspicious_registry
 {
     meta:
-        description     = ".npmrc redirects to non-canonical npm registry — possible supply chain redirect"
-        author          = "wtfpkg-rules"
-        date            = "2026-05-31"
-        version         = "1.0"
-        reference       = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/npm-npmrc-manipulation.md"
-        technique       = "NPM-03"
-        severity        = "medium"
-        mitre_attack    = "T1195.001, T1071.001"
+        description  = ".npmrc redirects to non-canonical npm registry — possible supply chain redirect"
+        author       = "wtfpkg-rules"
+        id           = "d56ed158-89f0-4814-b8b9-0a8e4cc711fb"
+        date         = "2026-05-31"
+        modified     = "2026-05-31"
+        reference    = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/npm-npmrc-manipulation.md"
+        score        = 70
+        quality      = 75
+        tags         = "SUPPLY_CHAIN, T1195_001, T1071_001, NPM, NODEJS"
 
     strings:
-        // Registry directive
         $reg_directive  = "registry=" ascii
 
-        // Known-legitimate registries (used in filter condition)
         $fp_npmjs       = "registry.npmjs.org" ascii
         $fp_yarnpkg     = "registry.yarnpkg.com" ascii
         $fp_github      = "npm.pkg.github.com" ascii
         $fp_localhost   = "localhost" ascii
         $fp_127         = "127.0.0" ascii
 
-        // SSL/security disabling (any match here + registry = high confidence)
+        // Security-bypass strings: present alone they upgrade confidence
         $ssl_false      = "strict-ssl=false" ascii
         $ssl_false2     = "strict-ssl = false" ascii
         $ignore_scripts = "ignore-scripts=false" ascii
@@ -151,11 +130,8 @@ rule wtfpkg_npm_npmrc_suspicious_registry
     condition:
         filesize < 10KB and
         $reg_directive and
-        not 1 of ($fp_npmjs, $fp_yarnpkg, $fp_github, $fp_localhost, $fp_127) and
-        (
-            // Either unknown registry + security bypass
-            1 of ($ssl_false, $ssl_false2, $ignore_scripts) or
-            // Or just unknown registry (lower confidence, but still medium)
-            #reg_directive >= 1
-        )
+        not 1 of ($fp_npmjs, $fp_yarnpkg, $fp_github, $fp_localhost, $fp_127)
+        // Removed tautological `#reg_directive >= 1` — $reg_directive being true already
+        // guarantees count >= 1. Both branches of the original inner OR were equivalent.
+        // The security-bypass strings are now available for correlation in external tooling.
 }

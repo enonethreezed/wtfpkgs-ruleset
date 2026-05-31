@@ -3,55 +3,51 @@
  *
  * Techniques covered:
  *   CARGO-01  build.rs build script execution
- *   CARGO-03  cargo install --git (unpinned)
  *   CARGO-04  procedural macro compile-time execution
  *
  * References: https://github.com/0xv1n/WTFpkg
  * Author: wtfpkg-rules
  * Date: 2026-05-31
  * License: MIT
+ *
+ * Changes vs initial release:
+ *   - wtfpkg_cargo_build_rs_spawn_shell: short-atom fix for 4-byte quoted strings.
+ *     `"\"sh\""` (atom: `"sh"` = 4 bytes) -> `"(\"sh\")"` (atom: `("sh")` = 6 bytes).
+ *     Same fix applied to "nc", "cmd", and the FP strings "cc" and "gcc".
+ *     Rationale: Command::new("sh") always has the argument wrapped in parens, so
+ *     requiring the closing paren is both more specific and produces a longer atom.
+ *   - Metadata: added id, modified, score, quality, tags; removed non-standard fields;
+ *     reordered to YARA Forge canonical order
  */
 
-/*
- * Detects build.rs files that combine network or subprocess access with
- * credential-harvesting env var reads. Legitimate build scripts check
- * compiler features and emit cargo: directives; they do not read AWS keys
- * or open TCP connections.
- *
- * Requires BOTH the credential read AND a network/shell execution pattern
- * to avoid FPs from build scripts that legitimately check PATH or HOME.
- */
 rule wtfpkg_cargo_build_rs_credential_exfil
 {
     meta:
-        description     = "build.rs reads credential env vars and performs network/subprocess access"
-        author          = "wtfpkg-rules"
-        date            = "2026-05-31"
-        version         = "1.0"
-        reference       = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-build-rs.md"
-        technique       = "CARGO-01"
-        severity        = "critical"
-        mitre_attack    = "T1195.001, T1552.001"
+        description  = "build.rs reads credential env vars and performs network/subprocess access"
+        author       = "wtfpkg-rules"
+        id           = "ee726562-8973-46d8-95c7-884b5ebf396f"
+        date         = "2026-05-31"
+        modified     = "2026-05-31"
+        reference    = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-build-rs.md"
+        score        = 80
+        quality      = 75
+        tags         = "SUPPLY_CHAIN, T1195_001, T1552_001, CARGO, RUST, CREDENTIAL_EXFIL"
 
     strings:
-        // build.rs functional context (Rust-specific cargo output macros)
         $cargo_rerun    = "cargo:rerun-if-changed" ascii
         $cargo_rustc    = "cargo:rustc-" ascii
         $fn_main        = "fn main()" ascii
 
-        // Credential env vars read at build time
         $env_aws_sec    = "AWS_SECRET_ACCESS_KEY" ascii
         $env_aws_id     = "AWS_ACCESS_KEY_ID" ascii
         $env_gh_token   = "GITHUB_TOKEN" ascii
         $env_npm        = "NPM_TOKEN" ascii
         $env_ci         = "CI_JOB_TOKEN" ascii
 
-        // Network access in Rust
         $net_tcpstream  = "TcpStream::connect" ascii
         $net_reqwest    = "reqwest::" ascii
         $net_ureq       = "ureq::" ascii
 
-        // Subprocess execution
         $cmd_new        = "Command::new(" ascii
         $cmd_output     = ".output()" ascii
         $cmd_spawn      = ".spawn()" ascii
@@ -65,43 +61,38 @@ rule wtfpkg_cargo_build_rs_credential_exfil
 }
 
 
-/*
- * Detects build.rs files that spawn shells (bash/sh/cmd) or network utilities
- * (curl/wget) via std::process::Command — a strong indicator of malicious
- * activity since legitimate build scripts call compilers and linkers, not shells.
- *
- * Requires Command::new + suspicious binary name as string argument.
- */
 rule wtfpkg_cargo_build_rs_spawn_shell
 {
     meta:
-        description     = "build.rs spawns a shell or network utility via Command::new"
-        author          = "wtfpkg-rules"
-        date            = "2026-05-31"
-        version         = "1.0"
-        reference       = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-build-rs.md"
-        technique       = "CARGO-01"
-        severity        = "high"
-        mitre_attack    = "T1195.001, T1059.004"
+        description  = "build.rs spawns a shell or network utility via Command::new"
+        author       = "wtfpkg-rules"
+        id           = "dc592717-33e0-4b8e-be51-8dff38654a24"
+        date         = "2026-05-31"
+        modified     = "2026-05-31"
+        reference    = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-build-rs.md"
+        score        = 75
+        quality      = 75
+        tags         = "SUPPLY_CHAIN, T1195_001, T1059_004, CARGO, RUST"
 
     strings:
         $fn_main        = "fn main()" ascii
         $cmd_new        = "Command::new(" ascii
 
-        // Suspicious binary targets as string literals
-        $shell_bash     = "\"bash\"" ascii
-        $shell_sh       = "\"sh\"" ascii
-        $shell_cmd      = "\"cmd\"" ascii
-        $shell_pwsh     = "\"powershell\"" ascii
-        $net_curl       = "\"curl\"" ascii
-        $net_wget       = "\"wget\"" ascii
-        $net_nc         = "\"nc\"" ascii
+        // Include the closing paren so the atom is "(\"bash\")" = 8 bytes,
+        // "(\"sh\")" = 6 bytes, etc. — avoids the 4-byte atom issue for short names.
+        $shell_bash     = "(\"bash\")" ascii
+        $shell_sh       = "(\"sh\")" ascii
+        $shell_cmd      = "(\"cmd\")" ascii
+        $shell_pwsh     = "(\"powershell\")" ascii
+        $net_curl       = "(\"curl\")" ascii
+        $net_wget       = "(\"wget\")" ascii
+        $net_nc         = "(\"nc\")" ascii
 
-        // Legitimate targets (reduce FP)
-        $fp_cc          = "\"cc\"" ascii
-        $fp_gcc         = "\"gcc\"" ascii
-        $fp_clang       = "\"clang\"" ascii
-        $fp_pkgconfig   = "\"pkg-config\"" ascii
+        // FP reduction: same atom-length fix applied to known-legitimate compiler names
+        $fp_cc          = "(\"cc\")" ascii
+        $fp_gcc         = "(\"gcc\")" ascii
+        $fp_clang       = "(\"clang\")" ascii
+        $fp_pkgconfig   = "(\"pkg-config\")" ascii
 
     condition:
         $fn_main and $cmd_new and
@@ -110,41 +101,31 @@ rule wtfpkg_cargo_build_rs_spawn_shell
 }
 
 
-/*
- * Detects proc-macro crates (lib.rs / lib/ with proc-macro = true in Cargo.toml)
- * that include network access. Proc-macros should only manipulate token streams;
- * any network I/O inside a proc-macro is anomalous.
- *
- * Applied to lib.rs files when Cargo.toml also contains proc-macro = true.
- */
 rule wtfpkg_cargo_proc_macro_network_access
 {
     meta:
-        description     = "Rust proc-macro source contains network or subprocess access — compile-time code execution risk"
-        author          = "wtfpkg-rules"
-        date            = "2026-05-31"
-        version         = "1.0"
-        reference       = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-proc-macros.md"
-        technique       = "CARGO-04"
-        severity        = "critical"
-        mitre_attack    = "T1195.001, T1059"
+        description  = "Rust proc-macro source contains network or subprocess access — compile-time code execution risk"
+        author       = "wtfpkg-rules"
+        id           = "483ff1d6-e40d-4b52-98e8-3d937cc73373"
+        date         = "2026-05-31"
+        modified     = "2026-05-31"
+        reference    = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-proc-macros.md"
+        score        = 80
+        quality      = 75
+        tags         = "SUPPLY_CHAIN, T1195_001, CARGO, RUST, PROC_MACRO"
 
     strings:
-        // proc-macro crate signature
         $proc_macro_attr = "proc_macro_attribute" ascii
         $proc_macro_drv  = "proc_macro_derive" ascii
         $proc_macro_use  = "use proc_macro" ascii
         $extern_pm       = "extern crate proc_macro" ascii
 
-        // Network access
         $net_tcpstream   = "TcpStream::connect" ascii
         $net_reqwest     = "reqwest::" ascii
         $net_std_net     = "std::net::" ascii
 
-        // Subprocess
         $cmd_new         = "Command::new(" ascii
 
-        // Filesystem access outside token manipulation
         $fs_write        = "std::fs::write" ascii
         $fs_create       = "File::create(" ascii
 

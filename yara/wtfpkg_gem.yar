@@ -10,41 +10,46 @@
  * Author: wtfpkg-rules
  * Date: 2026-05-31
  * License: MIT
+ *
+ * Changes vs initial release:
+ *   - wtfpkg_gem_native_ext_suspicious_exec: BUGFIX — `"system.*curl"` and
+ *     `"system.*wget"` were plain string literals, not regexes. The `.*` was being
+ *     matched literally (never matches real code). Replaced with proper YARA regex
+ *     syntax: /system\([^)]*curl/ and /system\([^)]*wget/
+ *   - wtfpkg_gem_plugin_install_hook_exec: backtick regex tightened from
+ *     /`[^`]{5,100}`/ (single-byte leading atom) to
+ *     /`(curl|wget|nc|bash|python|sh)\b[^`]+`/ — atom is now the fixed
+ *     prefix `` `curl`` / `` `wget`` etc., eliminating the short-atom warning.
+ *   - Metadata: added id, modified, score, quality, tags; removed non-standard fields;
+ *     reordered to YARA Forge canonical order
  */
 
-/*
- * Detects rubygems_plugin.rb files that register post_install or pre_install
- * hooks containing network or shell execution payloads.
- * The combination of the Gem.post_install registration AND a shell/network
- * call is the key signal — normal plugins register hooks for UI callbacks,
- * not for running curl.
- */
 rule wtfpkg_gem_plugin_install_hook_exec
 {
     meta:
-        description     = "rubygems_plugin.rb registers install hook with network/shell execution"
-        author          = "wtfpkg-rules"
-        date            = "2026-05-31"
-        version         = "1.0"
-        reference       = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-install-hooks.md"
-        technique       = "GEM-02"
-        severity        = "high"
-        mitre_attack    = "T1195.001, T1546"
+        description  = "rubygems_plugin.rb registers install hook with network/shell execution"
+        author       = "wtfpkg-rules"
+        id           = "45288241-062b-44c7-b162-472d576e7a9f"
+        date         = "2026-05-31"
+        modified     = "2026-05-31"
+        reference    = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-install-hooks.md"
+        score        = 75
+        quality      = 75
+        tags         = "SUPPLY_CHAIN, T1195_001, T1546, GEM, RUBY, PERSISTENCE"
 
     strings:
-        // Install hook registration
         $hook_post      = "Gem.post_install" ascii
         $hook_pre       = "Gem.pre_install" ascii
         $hook_post_u    = "Gem.post_uninstall" ascii
 
-        // Shell execution in Ruby
         $rb_system      = "system(" ascii
-        $rb_backtick    = /`[^`]{5,100}`/ ascii
+        // Tightened: require a known attack tool after the backtick so YARA can
+        // extract a useful fixed atom (e.g. "`curl") instead of a single backtick.
+        $rb_backtick    = /`(curl|wget|nc|bash|python|ruby|sh)\b[^`]+`/ ascii
         $rb_exec        = "exec(" ascii
         $rb_open        = "IO.popen(" ascii
         $rb_spawn       = "spawn(" ascii
 
-        // Network access
         $rb_net_http    = "Net::HTTP" ascii
         $rb_uri         = "URI.open(" ascii
         $rb_open_uri    = "open-uri" ascii
@@ -60,37 +65,31 @@ rule wtfpkg_gem_plugin_install_hook_exec
 }
 
 
-/*
- * Detects extconf.rb or Rakefile extension scripts that include system command
- * execution beyond what is needed to generate a Makefile.
- * Legitimate extconf.rb calls create_makefile() and check for headers;
- * they should not invoke curl, wget, or shell commands with network URLs.
- */
 rule wtfpkg_gem_native_ext_suspicious_exec
 {
     meta:
-        description     = "extconf.rb or Rakefile extension script contains shell execution with network patterns"
-        author          = "wtfpkg-rules"
-        date            = "2026-05-31"
-        version         = "1.0"
-        reference       = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-native-extension.md"
-        technique       = "GEM-03"
-        severity        = "high"
-        mitre_attack    = "T1195.001, T1059.004"
+        description  = "extconf.rb or Rakefile extension script contains shell execution with network patterns"
+        author       = "wtfpkg-rules"
+        id           = "2301ebc8-6df8-48bf-b56a-edbc8015cf91"
+        date         = "2026-05-31"
+        modified     = "2026-05-31"
+        reference    = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-native-extension.md"
+        score        = 75
+        quality      = 75
+        tags         = "SUPPLY_CHAIN, T1195_001, T1059_004, GEM, RUBY"
 
     strings:
-        // extconf.rb context
         $extconf_ctx    = "create_makefile(" ascii
         $extconf_ctx2   = "find_header(" ascii
         $extconf_ctx3   = "find_library(" ascii
 
-        // Rakefile context
         $rake_task      = "task :" ascii
         $rake_default   = "task default:" ascii
 
-        // Shell/network execution
-        $sys_curl       = "system.*curl" ascii
-        $sys_wget       = "system.*wget" ascii
+        // BUGFIX: was `"system.*curl"` / `"system.*wget"` (literal string, never matched).
+        // Now proper YARA regexes matching system() calls that include curl/wget as arguments.
+        $sys_curl       = /system\([^)]*curl/ ascii
+        $sys_wget       = /system\([^)]*wget/ ascii
         $backtick_curl  = /`curl [^`]+`/ ascii
         $backtick_wget  = /`wget [^`]+`/ ascii
         $sys_bash       = "system('bash'" ascii
@@ -105,31 +104,24 @@ rule wtfpkg_gem_native_ext_suspicious_exec
 }
 
 
-/*
- * Detects .gemspec files where the extensions field points to a Rakefile
- * (not the standard extconf.rb) AND the Rakefile companion contains
- * suspicious execution. Applied to .gemspec files.
- * Also detects gemspec files with extensions pointing to unusual paths.
- */
 rule wtfpkg_gem_gemspec_rakefile_extension
 {
     meta:
-        description     = "gemspec extensions field references Rakefile — higher-risk extension mechanism"
-        author          = "wtfpkg-rules"
-        date            = "2026-05-31"
-        version         = "1.0"
-        reference       = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-build-script.md"
-        technique       = "GEM-01"
-        severity        = "medium"
-        mitre_attack    = "T1195.001"
+        description  = "gemspec extensions field references Rakefile — higher-risk extension mechanism"
+        author       = "wtfpkg-rules"
+        id           = "6451cdfc-c8ed-44b3-b610-c61c98340ab1"
+        date         = "2026-05-31"
+        modified     = "2026-05-31"
+        reference    = "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-build-script.md"
+        score        = 65
+        quality      = 75
+        tags         = "SUPPLY_CHAIN, T1195_001, GEM, RUBY"
 
     strings:
-        // gemspec context
         $gemspec_spec   = "Gem::Specification.new" ascii
         $gemspec_ext    = "spec.extensions" ascii
         $gemspec_ext2   = "s.extensions" ascii
 
-        // Rakefile (not extconf.rb) in extensions
         $rake_ref       = "'Rakefile'" ascii
         $rake_ref2      = "\"Rakefile\"" ascii
         $rake_ext       = "'ext/Rakefile'" ascii
