@@ -1,0 +1,125 @@
+id: 1da7ee93-d0e3-49db-bd2c-6846c5f281fb
+name: RubyGems Extension or Install Hook Spawns Suspicious Process
+description: |
+  Detects ruby spawning network utilities or shells during gem installation
+  through native extensions (extconf.rb), Rakefile-based extensions, or install
+  hooks via rubygems_plugin.rb.
+
+  The rubygems_plugin.rb vector (WTFpkg GEM-02) is particularly dangerous
+  because a single malicious gem transforms the package manager into a persistent
+  execution hook: the Gem.post_install callback fires on every subsequent
+  gem install, not just when the original malicious gem is installed.
+
+  Covers WTFpkg GEM-01, GEM-02, GEM-03.
+  Data source: Microsoft Defender for Endpoint (DeviceProcessEvents).
+severity: High
+status: Available
+requiredDataConnectors:
+  - connectorId: MicrosoftDefenderAdvancedThreatProtection
+    dataTypes:
+      - DeviceProcessEvents
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - InitialAccess
+  - Execution
+  - Persistence
+relevantTechniques:
+  - T1195.001
+  - T1059.004
+  - T1546
+query: |
+  let RubyProcessNames = dynamic(["ruby", "ruby3.1", "ruby3.2", "ruby3.3", "ruby2.7"]);
+  let GemInstallIndicators = dynamic(["gem install", "bundle install",
+                                       "extconf.rb", "rubygems_plugin"]);
+  let SuspiciousChildren = dynamic(["curl", "wget", "bash", "sh", "nc", "ncat",
+                                     "python", "python3"]);
+  let LegitimateCompilers = dynamic(["gcc", "g++", "make", "cc", "ld", "ar",
+                                      "cmake", "pkg-config"]);
+  // Find ruby processes in gem install context
+  let GemInstalls = DeviceProcessEvents
+  | where TimeGenerated > ago(1h)
+  | where FileName in~ (RubyProcessNames)
+  | where ProcessCommandLine has_any (GemInstallIndicators)
+  | project
+      Timestamp = TimeGenerated,
+      DeviceName,
+      AccountName,
+      RubyPID = ProcessId,
+      RubyCmd = ProcessCommandLine;
+  // Find suspicious children of ruby processes
+  let SuspiciousSpawns = DeviceProcessEvents
+  | where TimeGenerated > ago(1h)
+  | where InitiatingProcessFileName in~ (RubyProcessNames)
+  | where InitiatingProcessCommandLine has_any (GemInstallIndicators)
+  | where FileName in~ (SuspiciousChildren)
+  | where not (ProcessCommandLine has_any (LegitimateCompilers))
+  | project
+      TimeGenerated,
+      DeviceName,
+      AccountName,
+      AccountDomain,
+      InitiatingProcessFileName,
+      InitiatingProcessCommandLine,
+      FileName,
+      ProcessCommandLine,
+      ProcessId;
+  // Return suspicious spawns enriched
+  SuspiciousSpawns
+  | extend
+      AlertDetail = strcat("gem install ruby process spawned ", FileName,
+                           " on ", DeviceName, ": ", ProcessCommandLine),
+      // Flag post_install hook pattern (persistent risk)
+      IsPersistentHook = iff(InitiatingProcessCommandLine has "rubygems_plugin"
+                             or ProcessCommandLine has "rubygems_plugin",
+                             true, false)
+  | project
+      TimeGenerated,
+      DeviceName,
+      AccountName,
+      AccountDomain,
+      InitiatingProcessFileName,
+      InitiatingProcessCommandLine,
+      FileName,
+      ProcessCommandLine,
+      ProcessId,
+      IsPersistentHook,
+      AlertDetail
+  | order by TimeGenerated desc
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: FullName
+        columnName: DeviceName
+  - entityType: Account
+    fieldMappings:
+      - identifier: Name
+        columnName: AccountName
+      - identifier: NTDomain
+        columnName: AccountDomain
+  - entityType: Process
+    fieldMappings:
+      - identifier: ProcessId
+        columnName: ProcessId
+      - identifier: CommandLine
+        columnName: ProcessCommandLine
+customDetails:
+  RubyContext: InitiatingProcessCommandLine
+  SuspiciousCommand: ProcessCommandLine
+  PersistentHook: IsPersistentHook
+alertDetailsOverride:
+  alertDisplayNameFormat: "RubyGems spawned {{FileName}} on {{DeviceName}}"
+  alertDescriptionFormat: "{{AlertDetail}}"
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: wtfpkg-rules
+  support:
+    tier: Community
+  categories:
+    domains: ["Security - Others", "Supply Chain"]

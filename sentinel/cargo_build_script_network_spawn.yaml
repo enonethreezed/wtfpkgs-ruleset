@@ -1,0 +1,108 @@
+id: 8ac39a52-7fd3-4e4d-8ed0-68d20a659daf
+name: Cargo Build Script or Proc-Macro Spawns Suspicious Child Process
+description: |
+  Detects cargo or rustc spawning network utilities or shells during build.rs
+  execution or proc-macro compilation. Rust build scripts legitimately invoke
+  compilers, linkers, and pkg-config — they must not initiate outbound connections
+  or spawn shells.
+
+  Covers WTFpkg CARGO-01 (build.rs) and CARGO-04 (proc-macros).
+  Particularly dangerous in CI/CD environments where environment variables
+  contain deployment credentials (AWS keys, GitHub tokens, npm tokens).
+
+  The rule narrows scope by requiring the parent command line to contain
+  build-script-build or --crate-type proc-macro context strings.
+  Data source: Microsoft Defender for Endpoint (DeviceProcessEvents).
+severity: High
+status: Available
+requiredDataConnectors:
+  - connectorId: MicrosoftDefenderAdvancedThreatProtection
+    dataTypes:
+      - DeviceProcessEvents
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - InitialAccess
+  - Execution
+  - CredentialAccess
+relevantTechniques:
+  - T1195.001
+  - T1059.004
+  - T1552.001
+query: |
+  let CargoParents = dynamic(["cargo", "rustc"]);
+  let BuildScriptIndicators = dynamic(["build-script-build", "build_script",
+                                        "--crate-type proc-macro"]);
+  let SuspiciousChildren = dynamic(["curl", "wget", "bash", "sh", "dash", "nc",
+                                     "ncat", "python", "python3"]);
+  let LegitimateTools = dynamic(["pkg-config", "cc", "gcc", "g++", "ar", "ld",
+                                  "llvm-config", "cmake", "ninja"]);
+  DeviceProcessEvents
+  | where TimeGenerated > ago(1h)
+  | where InitiatingProcessFileName in~ (CargoParents)
+  | where InitiatingProcessCommandLine has_any (BuildScriptIndicators)
+  | where FileName in~ (SuspiciousChildren)
+  | where not (ProcessCommandLine has_any (LegitimateTools))
+  // Compute risk signal: network URL in child = higher confidence
+  | extend
+      HasNetworkUrl = iff(ProcessCommandLine has_any ("http://", "https://"), true, false),
+      HasCredPattern = iff(ProcessCommandLine has_any (
+          "AWS_SECRET", "GITHUB_TOKEN", "NPM_TOKEN", "CI_TOKEN"), true, false),
+      AlertConfidence = iff(
+          ProcessCommandLine has_any ("http://", "https://", "/dev/tcp/"),
+          "High", "Medium"),
+      AlertDetail = strcat("Cargo build process spawned ", FileName,
+                           " on ", DeviceName, ": ", ProcessCommandLine)
+  | project
+      TimeGenerated,
+      DeviceName,
+      AccountName,
+      AccountDomain,
+      InitiatingProcessFileName,
+      InitiatingProcessCommandLine,
+      FileName,
+      ProcessCommandLine,
+      ProcessId,
+      HasNetworkUrl,
+      HasCredPattern,
+      AlertConfidence,
+      AlertDetail
+  | order by TimeGenerated desc
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: FullName
+        columnName: DeviceName
+  - entityType: Account
+    fieldMappings:
+      - identifier: Name
+        columnName: AccountName
+      - identifier: NTDomain
+        columnName: AccountDomain
+  - entityType: Process
+    fieldMappings:
+      - identifier: ProcessId
+        columnName: ProcessId
+      - identifier: CommandLine
+        columnName: ProcessCommandLine
+customDetails:
+  BuildContext: InitiatingProcessCommandLine
+  ChildCommand: ProcessCommandLine
+  HasNetworkUrl: HasNetworkUrl
+  AlertConfidence: AlertConfidence
+alertDetailsOverride:
+  alertDisplayNameFormat: "Cargo build spawned {{FileName}} on {{DeviceName}} [{{AlertConfidence}}]"
+  alertDescriptionFormat: "{{AlertDetail}}"
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: wtfpkg-rules
+  support:
+    tier: Community
+  categories:
+    domains: ["Security - Others", "Supply Chain"]
