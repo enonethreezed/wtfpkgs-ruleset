@@ -1,0 +1,117 @@
+[metadata]
+creation_date = "2026/05/31"
+integration = ["endpoint", "auditd_manager"]
+maturity = "production"
+updated_date = "2026/05/31"
+
+[rule]
+author = ["wtfpkg-rules"]
+description = """
+Detects cargo or rustc spawning network utilities or shells during build.rs
+execution or proc-macro compilation. Rust build scripts legitimately call
+compilers, linkers, and pkg-config; they must not initiate outbound connections
+or spawn interactive shells. Proc-macros (crate-type proc-macro) execute
+arbitrary Rust code at compile time with full system access, making them
+equivalent in risk to build.rs. The detection narrows scope by requiring the
+parent command line to contain build-script or proc-macro context strings.
+Covers WTFpkg CARGO-01 and CARGO-04.
+"""
+false_positives = [
+  """Build scripts for crates like openssl-sys or bindgen may invoke shell wrappers
+     around pkg-config or llvm-config. These appear with specific tool names in the
+     command line and are already excluded in the not filter. Extend the exclusion
+     list for additional known-good build toolchain wrappers.""",
+  """Cargo-based CI pipelines that call shell scripts for version detection or
+     environment setup before the actual build begins. Scope the rule to the
+     specific build phase by tuning the parent command line filter."""
+]
+from = "now-9m"
+index = [
+  "logs-endpoint.events.process*",
+  "endgame-*",
+  "auditbeat-*"
+]
+language = "eql"
+license = "Elastic License v2"
+name = "Cargo Build Script or Proc-Macro Spawns Suspicious Child Process"
+note = """
+## Triage and Response
+
+1. Identify the crate: `process.parent.command_line` will contain the build script
+   binary path, typically `~/.cargo/registry/src/<registry>/<crate-ver>/build_script_build`
+   or similar. Extract the crate name and version.
+2. Inspect the build.rs: `cat ~/.cargo/registry/src/**/<crate-ver>/build.rs`
+3. Check crates.io for the crate: review download history, owner account age,
+   and recent version publishes. A spike in version bumps is suspicious.
+4. For proc-macros: `cargo metadata --format-version 1 | python3 -c "import json,sys; [print(p['name'],p['version'],p.get('source','')) for p in json.load(sys.stdin)['packages'] if any(t['kind']==['proc-macro'] for t in p.get('targets',[]))]"`
+5. If malicious, remove from ~/.cargo/registry, add to Cargo.lock deny list,
+   and report to security@rust-lang.org / RustSec (https://rustsec.org/).
+"""
+references = [
+  "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-build-rs.md",
+  "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-proc-macros.md"
+]
+risk_score = 73
+rule_id = "f751c128-ba72-4951-97ff-d27c06140895"
+severity = "high"
+tags = [
+  "Domain: Endpoint",
+  "OS: Linux",
+  "OS: macOS",
+  "OS: Windows",
+  "Use Case: Threat Detection",
+  "Use Case: Supply Chain",
+  "Tactic: Initial Access",
+  "Tactic: Execution",
+  "Data Source: Elastic Defend"
+]
+timestamp_override = "event.ingested"
+type = "eql"
+
+query = '''
+process where event.action == "exec" and
+  process.parent.name in ("cargo", "rustc") and
+  process.parent.command_line like~ (
+    "*build-script-build*", "*build_script*", "*--crate-type proc-macro*"
+  ) and
+  process.name in ("curl", "wget", "bash", "sh", "dash", "nc", "ncat",
+                   "python", "python3") and
+  not process.name in ("pkg-config", "cc", "gcc", "g++", "ar", "ld",
+                       "llvm-config", "cmake")
+'''
+
+[[rule.threat]]
+framework = "MITRE ATT&CK"
+
+[[rule.threat.technique]]
+id = "T1195"
+name = "Supply Chain Compromise"
+reference = "https://attack.mitre.org/techniques/T1195/"
+
+[[rule.threat.technique.subtechnique]]
+id = "T1195.001"
+name = "Compromise Software Dependencies and Development Tools"
+reference = "https://attack.mitre.org/techniques/T1195/001/"
+
+[rule.threat.tactic]
+id = "TA0001"
+name = "Initial Access"
+reference = "https://attack.mitre.org/tactics/TA0001/"
+
+[[rule.threat]]
+framework = "MITRE ATT&CK"
+
+[[rule.threat.technique]]
+id = "T1059"
+name = "Command and Scripting Interpreter"
+reference = "https://attack.mitre.org/techniques/T1059/"
+
+[[rule.threat.technique.subtechnique]]
+id = "T1059.004"
+name = "Unix Shell"
+reference = "https://attack.mitre.org/techniques/T1059/004/"
+
+[rule.threat.tactic]
+id = "TA0002"
+name = "Execution"
+reference = "https://attack.mitre.org/tactics/TA0002/"

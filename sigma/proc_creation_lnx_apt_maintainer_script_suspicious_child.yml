@@ -1,0 +1,78 @@
+title: APT/dpkg Maintainer Script Spawns Suspicious Child Process
+id: 1bb7501a-b5e6-4bd8-a6e7-460237289f50
+status: experimental
+description: |
+    Detects dpkg or apt spawning network utilities, shells, or interpreters as
+    direct children during package installation. Legitimate maintainer scripts
+    configure services or create files; they do not initiate outbound connections
+    or spawn interactive shells.
+references:
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/apt-preinst-postinst-scripts.md
+    - https://www.debian.org/doc/debian-policy/ch-maintainerscripts.html
+author: wtfpkg-rules
+date: 2026-05-31
+tags:
+    - attack.initial_access
+    - attack.t1195.001
+    - attack.execution
+    - attack.t1059.004
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection_parent:
+        ParentCommandLine|contains:
+            - 'dpkg '
+            - 'apt-get '
+            - 'apt '
+        # Only catch execution *during* install/upgrade, not arbitrary dpkg invocations
+        ParentCommandLine|contains:
+            - '--install'
+            - '--configure'
+            - ' install '
+            - ' upgrade '
+    selection_susp_child:
+        Image|endswith:
+            - '/bash'
+            - '/sh'
+            - '/dash'
+            - '/curl'
+            - '/wget'
+            - '/nc'
+            - '/ncat'
+            - '/python'
+            - '/python3'
+            - '/perl'
+            - '/ruby'
+        # Exclude trivial non-network shell invocations:
+        # postinst scripts legitimately call update-alternatives, ldconfig, etc.
+    filter_legitimate_maintainer:
+        CommandLine|contains:
+            - 'update-alternatives'
+            - 'ldconfig'
+            - 'systemctl daemon-reload'
+            - 'mandb'
+            - 'fc-cache'
+            - 'gtk-update-icon-cache'
+            - 'udevadm'
+            - 'depmod'
+    filter_shell_nonet:
+        # Shell invoked to run a simple config command — no network indicators
+        Image|endswith:
+            - '/bash'
+            - '/sh'
+            - '/dash'
+        CommandLine|contains:
+            - 'update-alternatives'
+            - 'adduser'
+            - 'useradd'
+            - 'groupadd'
+            - 'mkdir '
+            - 'chmod '
+            - 'chown '
+    condition: selection_parent and selection_susp_child and not 1 of filter_*
+falsepositives:
+    - Package maintainer scripts that legitimately invoke shells for service
+      configuration (rare but possible in third-party .deb packages)
+    - Custom in-house .deb packages with elaborate postinst logic
+level: high

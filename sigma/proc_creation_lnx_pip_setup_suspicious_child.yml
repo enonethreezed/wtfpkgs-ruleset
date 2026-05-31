@@ -1,0 +1,57 @@
+title: pip / setup.py Spawns Network or Shell Process
+id: 8b1ad8d2-974f-41e1-b5e3-63a1875eb46a
+status: experimental
+description: |
+    Detects pip or a Python setup.py process spawning network utilities (curl,
+    wget) or shells as children. Legitimate setup.py scripts compile C extensions
+    or copy files; they do not establish outbound connections or open interactive
+    shells. This covers both classic setup.py execution and cmdclass overrides.
+references:
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/pip-setup-py-execution.md
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/pip-cmdclass-override.md
+author: wtfpkg-rules
+date: 2026-05-31
+tags:
+    - attack.initial_access
+    - attack.t1195.001
+    - attack.execution
+    - attack.t1059.006
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection_parent_pip:
+        ParentCommandLine|contains:
+            - 'pip install'
+            - 'pip3 install'
+            - 'setup.py install'
+            - 'setup.py develop'
+            - 'setup.py egg_info'
+            - 'setup.py build_ext'
+    selection_susp_child:
+        Image|endswith:
+            - '/curl'
+            - '/wget'
+            - '/bash'
+            - '/sh'
+            - '/nc'
+            - '/ncat'
+            - '/nmap'
+            - '/socat'
+            - '/perl'
+    filter_compiler_tools:
+        # C extension compilation is legitimate
+        Image|endswith:
+            - '/gcc'
+            - '/g++'
+            - '/cc'
+            - '/make'
+            - '/ld'
+            - '/ar'
+        CommandLine|contains:
+            - '.c'
+    condition: selection_parent_pip and selection_susp_child and not filter_compiler_tools
+falsepositives:
+    - Build tools that fetch system dependencies during compilation
+      (very unusual for pip packages; legitimate cases use build_requires)
+level: high

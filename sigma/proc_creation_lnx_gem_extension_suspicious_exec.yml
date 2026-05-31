@@ -1,0 +1,54 @@
+title: RubyGems Extension or Hook Spawns Suspicious Process
+id: 5f4b7245-c829-4de0-8f48-40e1252e3964
+status: experimental
+description: |
+    Detects ruby (invoked by gem install or bundle install) spawning network
+    utilities or shells as children. Legitimate gem native extension builds
+    compile C code via extconf.rb; they do not connect to external servers or
+    open shells. Also covers Rakefile-based extensions (GEM-01) and install
+    hooks via rubygems_plugin.rb (GEM-02).
+references:
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-native-extension.md
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-build-script.md
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-install-hooks.md
+author: wtfpkg-rules
+date: 2026-05-31
+tags:
+    - attack.initial_access
+    - attack.t1195.001
+    - attack.execution
+    - attack.t1059.004
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection_parent_gem:
+        ParentCommandLine|contains:
+            - 'gem install'
+            - 'bundle install'
+            - 'extconf.rb'
+            - 'rubygems_plugin'
+        ParentImage|endswith:
+            - '/ruby'
+            - '/ruby3'
+            - '/ruby2'
+    selection_susp_child:
+        Image|endswith:
+            - '/curl'
+            - '/wget'
+            - '/bash'
+            - '/sh'
+            - '/nc'
+            - '/python'
+            - '/python3'
+    filter_compiler:
+        Image|endswith:
+            - '/gcc'
+            - '/g++'
+            - '/make'
+            - '/cc'
+            - '/ld'
+    condition: selection_parent_gem and selection_susp_child and not filter_compiler
+falsepositives:
+    - Gems that use Rake to trigger standard build toolchains (rare edge case)
+level: high

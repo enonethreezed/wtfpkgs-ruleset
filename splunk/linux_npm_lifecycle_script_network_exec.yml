@@ -1,0 +1,90 @@
+name: Linux npm Lifecycle Script Spawns Network or Shell Process
+id: 0d6a99e9-1904-4ceb-a831-ba3287349b01
+version: 1
+date: '2026-05-31'
+author: wtfpkg-rules
+status: production
+type: TTP
+description: >
+  Detects node/npm spawning network utilities (curl, wget) or shells with network
+  indicators during package lifecycle script execution (preinstall, postinstall,
+  prepare). The rule narrows scope by requiring the child command line to contain
+  network-specific patterns (HTTP URLs, /dev/tcp, base64 decode patterns, eval)
+  to avoid alerting on legitimate build steps such as node-gyp or webpack
+  invocations (WTFpkg NPM-02).
+  Real-world incidents (eslint-scope 2018, event-stream 2018, Axios 2026) confirm
+  that postinstall scripts are a primary vector for credential exfiltration and
+  backdoor delivery in npm supply-chain attacks.
+data_source:
+  - Sysmon for Linux EventID 1
+  - CrowdStrike Falcon Endpoint
+  - Elastic Endpoint
+search: >
+  | tstats `security_content_summariesonly` count min(_time) as firstTime max(_time) as lastTime
+    from datamodel=Endpoint.Processes
+    where Processes.parent_process_name IN ("node", "nodejs")
+      AND Processes.process_name IN ("curl", "wget", "bash", "sh", "nc", "ncat",
+                                      "python", "python3", "perl")
+      AND (Processes.process IN ("*http://*", "*https://*", "*/dev/tcp/*",
+                                  "*base64*", "*eval $(*", "* -e *"))
+      AND NOT Processes.process IN ("*node-gyp*", "*node_modules/.bin/*")
+    by Processes.dest, Processes.user, Processes.parent_process_name,
+       Processes.process_name, Processes.process
+  | `drop_dm_object_name(Processes)`
+  | `security_content_ctime(firstTime)`
+  | `security_content_ctime(lastTime)`
+how_to_implement: >
+  Requires endpoint telemetry with full command-line logging and parent process
+  tracking. The detection relies on child process command line containing network
+  indicators, so the EDR must capture the full argv of spawned processes.
+  For high-volume npm CI environments, consider scoping to specific directories
+  (e.g. /home/runner/ or /var/lib/jenkins/) to reduce noise from known-good builds.
+known_false_positives: >
+  Packages like puppeteer, playwright, or esbuild that download platform-specific
+  binaries during postinstall. These should be allowlisted by destination directory
+  or by adding specific process paths to the NOT filter after review.
+  The inner-loop filter (http/https in command line) significantly reduces FPs
+  compared to alerting on all shell spawns from node.
+references:
+  - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/npm-lifecycle-scripts.md
+  - https://blog.npmjs.org/post/180565383195/details-about-the-event-stream-incident
+tags:
+  analytic_story:
+    - Linux Supply Chain Compromise
+    - npm Package Manager Abuse
+  asset_type: Endpoint
+  confidence: 70
+  impact: 85
+  message: >
+    npm/node process on $dest$ spawned $process_name$ with network indicators
+    in command line: $process$. User: $user$.
+    Possible npm lifecycle script executing malicious payload (WTFpkg NPM-02).
+  mitre_attack_id:
+    - T1195.001
+    - T1059.004
+    - T1059.007
+  observable:
+    - name: dest
+      type: Hostname
+      role:
+        - Victim
+    - name: user
+      type: User
+      role:
+        - Victim
+    - name: process_name
+      type: Process
+      role:
+        - Attacker
+  product:
+    - Splunk Enterprise Security
+    - Splunk Cloud
+  required_fields:
+    - _time
+    - Processes.dest
+    - Processes.user
+    - Processes.parent_process_name
+    - Processes.process_name
+    - Processes.process
+  risk_score: 60
+  security_domain: endpoint

@@ -1,0 +1,40 @@
+title: APT Installation with Authentication Bypass Flags
+id: 732206c3-1d51-41a7-86ba-de33fb013f43
+status: experimental
+description: |
+    Detects use of apt or apt-get with flags that disable GPG signature
+    verification. Legitimate automated pipelines should never require these
+    flags; their presence indicates either misconfiguration or an adversary
+    attempting to install unsigned/malicious packages.
+references:
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/apt-gpg-bypass.md
+    - https://manpages.debian.org/apt-get
+author: wtfpkg-rules
+date: 2026-05-31
+tags:
+    - attack.defense_evasion
+    - attack.t1562.001
+    - attack.initial_access
+    - attack.t1195.001
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection_binary:
+        Image|endswith:
+            - '/apt'
+            - '/apt-get'
+    selection_bypass_flag:
+        CommandLine|contains:
+            - '--allow-unauthenticated'
+            - '--allow-insecure-repositories'
+            - '--no-check-valid-until'
+    filter_known_ci:
+        # Some legacy CI base images use this during first bootstrap; exclude only
+        # if running as a well-known CI service account under a specific path
+        User: 'ci-bootstrap'
+    condition: selection_binary and selection_bypass_flag and not filter_known_ci
+falsepositives:
+    - Legacy CI pipeline bootstrap scripts against air-gapped mirrors
+      that lack GPG keys (very unusual in modern pipelines)
+level: high

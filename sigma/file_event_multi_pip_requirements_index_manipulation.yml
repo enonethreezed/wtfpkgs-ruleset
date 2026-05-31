@@ -1,0 +1,42 @@
+title: Suspicious pip Index Directives in Requirements File
+id: d582d5f6-cbc9-4881-8078-496aa7e74a64
+status: experimental
+description: |
+    Detects creation or modification of requirements*.txt files that contain
+    dangerous pip global options: --index-url, --extra-index-url, --find-links,
+    or --trusted-host. These directives in requirements files redirect package
+    downloads to attacker-controlled servers or disable TLS verification.
+    Legitimate projects configure index settings in pip.conf or CI env variables,
+    not in versioned requirements files.
+references:
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/pip-requirements-manipulation.md
+    - https://pip.pypa.io/en/stable/reference/requirements-file-format/
+author: wtfpkg-rules
+date: 2026-05-31
+tags:
+    - attack.initial_access
+    - attack.t1195.001
+    - attack.defense_evasion
+    - attack.t1071.001
+logsource:
+    category: file_event
+    product: linux
+detection:
+    # This rule is best applied as a content-inspection rule in SIEM by
+    # correlating file modification events with a subsequent grep/audit step,
+    # or via a pre-commit hook that scans requirements file content.
+    selection_filename:
+        TargetFilename|contains: 'requirements'
+        TargetFilename|endswith: '.txt'
+    # For SIEMs that support content monitoring (e.g., Wazuh FIM with content rules):
+    # Content must contain any of these strings
+    # NOTE: content-based detection requires FIM with content inspection enabled
+    selection_content_keywords:
+        # Map to content-level detection in the SIEM if supported
+        TargetFilename|contains: 'requirements'
+    condition: selection_filename
+    # Supplement with: grep -rn "\-\-index-url\|\-\-extra-index-url\|\-\-find-links\|\-\-trusted-host" requirements*.txt
+falsepositives:
+    - Internal tooling that intentionally places --index-url in requirements.txt
+      pointing to an approved private registry (document and allowlist by path)
+level: medium

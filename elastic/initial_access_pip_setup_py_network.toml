@@ -1,0 +1,119 @@
+[metadata]
+creation_date = "2026/05/31"
+integration = ["endpoint", "auditd_manager"]
+maturity = "production"
+updated_date = "2026/05/31"
+
+[rule]
+author = ["wtfpkg-rules"]
+description = """
+Detects pip or a Python setup.py process spawning network utilities (curl, wget)
+or shells as child processes during package installation. This covers both classic
+setup.py execution and cmdclass overrides (WTFpkg PIP-01, PIP-04).
+Malicious Python packages embed payloads in setup.py or override setup commands
+(install, egg_info, develop) to achieve code execution at install time. The egg_info
+override is particularly dangerous as it executes during `pip download` and
+`pip install --dry-run` in some pip versions — before the user commits to installation.
+The rule uses a sequence to correlate the pip/setup.py parent with the suspicious
+child within a 10-second window, reducing false positives from unrelated python processes.
+"""
+false_positives = [
+  """Packages that download pre-built native binaries during installation
+     (grpcio, torch, etc.). These are expected curl/wget calls but to known CDNs.
+     Allowlist by network.destination.domain for approved download hosts.""",
+  """Development environments running setup.py develop alongside curl in the same
+     shell session. The sequence constraint limits this significantly."""
+]
+from = "now-9m"
+index = [
+  "logs-endpoint.events.process*",
+  "endgame-*",
+  "auditbeat-*"
+]
+language = "eql"
+license = "Elastic License v2"
+name = "pip setup.py Spawns Network or Shell Process at Install Time"
+note = """
+## Triage and Response
+
+1. Identify the package: check `process.parent.command_line` for the `pip install`
+   invocation and extract the package name.
+2. Download the package without installing: `pip download <package> --no-deps -d /tmp/review/`
+3. Inspect setup.py: `grep -E "subprocess|urllib|requests|socket|os.system|eval|exec" /tmp/review/*/setup.py`
+4. Check PyPI for the package: verify download count, creation date, and maintainer history.
+   Newly registered packages with high similarity to popular names are suspicious.
+5. If malicious, report to security@pypi.org and https://github.com/pypa/advisory-db
+"""
+references = [
+  "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/pip-setup-py-execution.md",
+  "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/pip-cmdclass-override.md"
+]
+risk_score = 73
+rule_id = "7a983a27-e165-4837-881c-b34a95163c84"
+severity = "high"
+tags = [
+  "Domain: Endpoint",
+  "OS: Linux",
+  "Use Case: Threat Detection",
+  "Use Case: Supply Chain",
+  "Tactic: Initial Access",
+  "Tactic: Execution",
+  "Data Source: Elastic Defend",
+  "Data Source: Auditd Manager"
+]
+timestamp_override = "event.ingested"
+type = "eql"
+
+query = '''
+sequence by host.id, process.parent.entity_id with maxspan=10s
+  [process where event.action == "exec" and
+   process.name in ("pip", "pip3", "python", "python3") and
+   process.command_line like~ (
+     "*pip install*", "*pip3 install*",
+     "*setup.py install*", "*setup.py develop*",
+     "*setup.py egg_info*", "*setup.py build_ext*"
+   )]
+  [process where event.action == "exec" and
+   process.name in ("curl", "wget", "bash", "sh", "dash", "nc", "ncat",
+                    "python", "python3", "perl") and
+   not process.command_line like~ (
+     "*gcc*", "*g++*", "*cc*", "*make*",
+     "*pkg-config*", "*node-gyp*"
+   )]
+'''
+
+[[rule.threat]]
+framework = "MITRE ATT&CK"
+
+[[rule.threat.technique]]
+id = "T1195"
+name = "Supply Chain Compromise"
+reference = "https://attack.mitre.org/techniques/T1195/"
+
+[[rule.threat.technique.subtechnique]]
+id = "T1195.001"
+name = "Compromise Software Dependencies and Development Tools"
+reference = "https://attack.mitre.org/techniques/T1195/001/"
+
+[rule.threat.tactic]
+id = "TA0001"
+name = "Initial Access"
+reference = "https://attack.mitre.org/tactics/TA0001/"
+
+[[rule.threat]]
+framework = "MITRE ATT&CK"
+
+[[rule.threat.technique]]
+id = "T1059"
+name = "Command and Scripting Interpreter"
+reference = "https://attack.mitre.org/techniques/T1059/"
+
+[[rule.threat.technique.subtechnique]]
+id = "T1059.006"
+name = "Python"
+reference = "https://attack.mitre.org/techniques/T1059/006/"
+
+[rule.threat.tactic]
+id = "TA0002"
+name = "Execution"
+reference = "https://attack.mitre.org/tactics/TA0002/"

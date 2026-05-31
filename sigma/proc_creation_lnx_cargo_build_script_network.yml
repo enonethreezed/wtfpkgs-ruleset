@@ -1,0 +1,57 @@
+title: Cargo Build Script Spawns Network Process
+id: 47135170-8c18-42d8-9f4e-6ccaaa5f1e65
+status: experimental
+description: |
+    Detects cargo or rustc spawning network utilities as part of a build.rs
+    execution or proc-macro compilation. Rust build scripts legitimately invoke
+    compilers, linkers, and pkg-config; they should never initiate outbound
+    HTTP connections or spawn shells. Triggered by CARGO-01 and CARGO-04 techniques.
+references:
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-build-rs.md
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-proc-macros.md
+    - https://doc.rust-lang.org/cargo/reference/build-scripts.html
+author: wtfpkg-rules
+date: 2026-05-31
+tags:
+    - attack.initial_access
+    - attack.t1195.001
+    - attack.execution
+    - attack.t1059.004
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection_parent:
+        ParentImage|endswith:
+            - '/cargo'
+            - '/rustc'
+        # build.rs processes are identified by their working directory pattern
+        # or by cargo's subprocess naming convention
+        ParentCommandLine|contains:
+            - 'build-script-build'
+            - 'build_script'
+            - '--crate-type proc-macro'
+    selection_susp_child:
+        Image|endswith:
+            - '/curl'
+            - '/wget'
+            - '/bash'
+            - '/sh'
+            - '/nc'
+            - '/python'
+            - '/python3'
+    filter_legitimate_build:
+        # pkg-config is used by many crates to locate system libraries
+        Image|endswith:
+            - '/pkg-config'
+            - '/cc'
+            - '/gcc'
+            - '/g++'
+            - '/ar'
+            - '/ld'
+    condition: selection_parent and selection_susp_child and not filter_legitimate_build
+falsepositives:
+    - Build scripts that call pkg-config wrappers implemented as shell scripts
+    - Crates that download bindgen targets or LLVM components (openssl-sys, etc.)
+      — these are rare and should be explicitly allowlisted
+level: high

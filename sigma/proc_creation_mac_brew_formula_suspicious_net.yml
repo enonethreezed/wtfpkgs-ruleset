@@ -1,0 +1,50 @@
+title: Homebrew Formula or Cask Spawns Network Process on macOS
+id: 7baf3d7b-36cb-4242-82d7-1a75b711ca3d
+status: experimental
+description: |
+    Detects Homebrew's Ruby interpreter spawning network utilities or writing to
+    macOS persistence directories during formula/cask installation. Legitimate
+    Homebrew operations unpack archives and symlink binaries; they should not
+    independently initiate curl/wget connections or create LaunchAgent plists.
+    Covers BREW-01 (flight blocks), BREW-02 (pkg stanza), BREW-03 (formula install).
+references:
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/brew-cask-flight-blocks.md
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/brew-formula-install-ruby.md
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/brew-malicious-tap.md
+author: wtfpkg-rules
+date: 2026-05-31
+tags:
+    - attack.initial_access
+    - attack.t1195.001
+    - attack.persistence
+    - attack.t1543.001
+logsource:
+    category: process_creation
+    product: macos
+detection:
+    selection_parent_brew:
+        ParentImage|contains:
+            - '/Homebrew/'
+            - '/homebrew/'
+        ParentImage|endswith:
+            - '/ruby'
+    selection_susp_child_net:
+        Image|endswith:
+            - '/curl'
+            - '/wget'
+            - '/bash'
+            - '/sh'
+            - '/nc'
+            - '/python3'
+            - '/osascript'
+    filter_brew_internal:
+        # Homebrew itself uses curl to download bottles — filter by User-Agent or path
+        CommandLine|contains:
+            - '--user-agent'
+            - 'Homebrew/'
+            - '/Library/Caches/Homebrew/'
+    condition: selection_parent_brew and selection_susp_child_net and not filter_brew_internal
+falsepositives:
+    - Formulae that download pre-built binaries as part of their install method
+      (should be reviewed; legitimate formulae typically use Homebrew bottle system)
+level: high

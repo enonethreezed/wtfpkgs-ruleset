@@ -1,0 +1,45 @@
+title: Suspicious Write to APT Sources Configuration
+id: c1e78509-e681-4953-be81-f76c79467030
+status: experimental
+description: |
+    Detects file creation or modification in APT source directories by processes
+    other than known package management tools. Legitimate software may add sources
+    during installation (via postinst scripts), but direct writes from unexpected
+    parent processes — especially shells or interpreters — indicate source
+    injection for supply chain persistence.
+references:
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/apt-malicious-repo-source.md
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/apt-gpg-bypass.md
+author: wtfpkg-rules
+date: 2026-05-31
+tags:
+    - attack.initial_access
+    - attack.t1195.001
+    - attack.persistence
+    - attack.t1053.003
+logsource:
+    category: file_event
+    product: linux
+detection:
+    selection_path:
+        TargetFilename|startswith:
+            - '/etc/apt/sources.list.d/'
+            - '/etc/apt/trusted.gpg.d/'
+        TargetFilename|endswith:
+            - '.list'
+            - '.gpg'
+            - '.asc'
+    filter_legitimate_writers:
+        Image|endswith:
+            - '/apt'
+            - '/apt-get'
+            - '/add-apt-repository'
+            - '/dpkg'
+            - '/apt-key'
+    # curl/wget/python/bash writing directly = suspicious
+    condition: selection_path and not filter_legitimate_writers
+falsepositives:
+    - Configuration management tools (Ansible, Chef, Puppet) that manage
+      apt sources directly — add their agent image paths to filter_legitimate_writers
+    - Docker build layers adding sources (acceptable in controlled build images)
+level: medium

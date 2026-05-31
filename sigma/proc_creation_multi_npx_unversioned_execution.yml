@@ -1,0 +1,41 @@
+title: npx Executes Unversioned or Unscoped Package
+id: a0f792e0-4124-4900-89e3-63f17f093ea9
+status: experimental
+description: |
+    Detects npx invocations without a pinned version that could silently execute
+    a typosquatting package from the public npm registry. The --yes / -y flag
+    is a strong indicator because it bypasses the interactive confirmation prompt
+    that npx shows when running a package for the first time.
+    Particularly dangerous in CI/CD pipelines.
+references:
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/npm-npx-execution.md
+author: wtfpkg-rules
+date: 2026-05-31
+tags:
+    - attack.initial_access
+    - attack.t1195.001
+    - attack.execution
+    - attack.t1059.007
+    - attack.t1036.005
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection_npx:
+        Image|endswith:
+            - '/npx'
+        # --yes skips interactive confirmation — high-confidence indicator
+        CommandLine|contains:
+            - ' --yes '
+            - ' -y '
+    filter_pinned_version:
+        # Versioned invocations are much safer
+        CommandLine|re: '@[0-9]+\.[0-9]+'
+    filter_scoped:
+        # Scoped packages from org registries are lower risk
+        CommandLine|contains: '@'
+    condition: selection_npx and not filter_pinned_version and not filter_scoped
+falsepositives:
+    - CI scripts that deliberately use --yes for automation and are audited
+    - Developer interactive sessions using --yes intentionally (medium noise)
+level: medium

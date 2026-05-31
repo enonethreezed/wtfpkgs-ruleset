@@ -1,0 +1,90 @@
+name: Linux Cargo Build Script or Proc-Macro Spawns Suspicious Child Process
+id: f5f0f5ec-ebf3-49f5-8013-83d3d4698cb5
+version: 1
+date: '2026-05-31'
+author: wtfpkg-rules
+status: production
+type: TTP
+description: >
+  Detects cargo or rustc spawning network utilities or shells during build.rs
+  execution or proc-macro compilation. Rust build scripts legitimately invoke
+  compilers, linkers, and pkg-config; they should never initiate outbound
+  connections or spawn shells (WTFpkg CARGO-01, CARGO-04).
+  This is particularly dangerous in CI/CD pipelines where environment variables
+  contain deployment credentials (AWS keys, GitHub tokens, npm tokens) that
+  malicious build scripts exfiltrate before compilation completes.
+  A proc-macro crate can achieve the same effect at compile time without the
+  caller having any indication that code is executing.
+data_source:
+  - Sysmon for Linux EventID 1
+  - CrowdStrike Falcon Endpoint
+  - Elastic Endpoint
+search: >
+  | tstats `security_content_summariesonly` count min(_time) as firstTime max(_time) as lastTime
+    from datamodel=Endpoint.Processes
+    where Processes.parent_process_name IN ("cargo", "rustc")
+      AND (Processes.parent_process IN ("*build-script-build*", "*build_script*",
+                                         "*--crate-type proc-macro*"))
+      AND Processes.process_name IN ("curl", "wget", "bash", "sh", "nc",
+                                      "python", "python3")
+      AND NOT Processes.process_name IN ("pkg-config", "cc", "gcc", "g++", "ar", "ld")
+    by Processes.dest, Processes.user, Processes.parent_process_name,
+       Processes.parent_process, Processes.process_name, Processes.process
+  | `drop_dm_object_name(Processes)`
+  | `security_content_ctime(firstTime)`
+  | `security_content_ctime(lastTime)`
+how_to_implement: >
+  Requires endpoint telemetry that captures both the process name and command line
+  of parent processes. The key discriminator is the parent command line containing
+  build-script-build or --crate-type proc-macro, which identifies the specific
+  Cargo build phase. Without parent command line data, this rule will generate
+  higher FP volume from legitimate cargo invocations.
+known_false_positives: >
+  Build scripts for some crates (openssl-sys, bindgen) may invoke shell wrappers
+  around pkg-config or llvm-config. These should appear with specific tools in
+  the command line and can be allowlisted by process path. The filter already
+  excludes known compiler tools.
+references:
+  - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-build-rs.md
+  - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-proc-macros.md
+  - https://doc.rust-lang.org/cargo/reference/build-scripts.html
+tags:
+  analytic_story:
+    - Linux Supply Chain Compromise
+    - Cargo Package Manager Abuse
+  asset_type: Endpoint
+  confidence: 75
+  impact: 90
+  message: >
+    Cargo/rustc build process on $dest$ spawned $process_name$ (command: $process$)
+    during build script or proc-macro compilation. Parent: $parent_process$.
+    User: $user$. Possible malicious Rust crate executing payload at build time (WTFpkg CARGO-01/04).
+  mitre_attack_id:
+    - T1195.001
+    - T1059.004
+  observable:
+    - name: dest
+      type: Hostname
+      role:
+        - Victim
+    - name: user
+      type: User
+      role:
+        - Victim
+    - name: process_name
+      type: Process
+      role:
+        - Attacker
+  product:
+    - Splunk Enterprise Security
+    - Splunk Cloud
+  required_fields:
+    - _time
+    - Processes.dest
+    - Processes.user
+    - Processes.parent_process_name
+    - Processes.parent_process
+    - Processes.process_name
+    - Processes.process
+  risk_score: 68
+  security_domain: endpoint

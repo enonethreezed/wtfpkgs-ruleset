@@ -1,0 +1,101 @@
+id: ad4f87d8-74d9-43c4-bcd2-4cd4261d2ce4
+name: APT GPG Verification Bypass or Malicious Source Injection
+description: |
+  Detects two related APT supply chain techniques:
+  1. (APT-01) APT/apt-get executed with --allow-unauthenticated or
+     --allow-insecure-repositories flags, disabling GPG signature verification.
+  2. (APT-02) New .list files created in /etc/apt/sources.list.d/ by unexpected
+     processes (not apt, add-apt-repository, or dpkg).
+
+  Both techniques enable installation of unsigned or malicious packages and are
+  rarely required in legitimate modern environments. The rule correlates both
+  patterns independently; each match is an independent alert.
+
+  Data source: Microsoft Defender for Endpoint (DeviceProcessEvents + DeviceFileEvents)
+  or Syslog-based Linux telemetry via AMA.
+severity: Medium
+status: Available
+requiredDataConnectors:
+  - connectorId: MicrosoftDefenderAdvancedThreatProtection
+    dataTypes:
+      - DeviceProcessEvents
+      - DeviceFileEvents
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - InitialAccess
+  - DefenseEvasion
+relevantTechniques:
+  - T1195.001
+  - T1562.001
+query: |
+  // Branch 1: GPG bypass flags in apt/apt-get command line
+  let GpgBypass = DeviceProcessEvents
+  | where TimeGenerated > ago(1h)
+  | where FileName in~ ("apt", "apt-get")
+  | where ProcessCommandLine has_any (
+      "--allow-unauthenticated",
+      "--allow-insecure-repositories",
+      "--no-check-valid-until")
+  | extend DetectionType = "GPG_Bypass",
+           Detail = strcat("apt executed with bypass flag on ", DeviceName,
+                           ": ", ProcessCommandLine)
+  | project TimeGenerated, DeviceName, AccountName, AccountDomain,
+            FileName, ProcessCommandLine, ProcessId,
+            InitiatingProcessFileName, DetectionType, Detail;
+  // Branch 2: New .list file written to /etc/apt/sources.list.d/ by unexpected writer
+  let SourceInjection = DeviceFileEvents
+  | where TimeGenerated > ago(1h)
+  | where FolderPath startswith "/etc/apt/sources.list.d/"
+  | where FileName endswith ".list" or FileName endswith ".sources"
+  | where ActionType in ("FileCreated", "FileModified")
+  | where InitiatingProcessFileName !in~ ("apt", "apt-get", "add-apt-repository",
+                                           "dpkg", "apt-key", "ansible", "chef-client",
+                                           "puppet", "salt-minion")
+  | extend DetectionType = "Source_Injection",
+           Detail = strcat("New APT source written by ", InitiatingProcessFileName,
+                           " on ", DeviceName, ": ", FolderPath, "/", FileName)
+  | project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName,
+            AccountDomain = InitiatingProcessAccountDomain,
+            FileName, ProcessCommandLine = InitiatingProcessCommandLine,
+            ProcessId = InitiatingProcessId,
+            InitiatingProcessFileName, DetectionType, Detail;
+  // Union both detection branches
+  union GpgBypass, SourceInjection
+  | order by TimeGenerated desc
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: FullName
+        columnName: DeviceName
+  - entityType: Account
+    fieldMappings:
+      - identifier: Name
+        columnName: AccountName
+      - identifier: NTDomain
+        columnName: AccountDomain
+  - entityType: Process
+    fieldMappings:
+      - identifier: ProcessId
+        columnName: ProcessId
+      - identifier: CommandLine
+        columnName: ProcessCommandLine
+customDetails:
+  DetectionType: DetectionType
+  Detail: Detail
+alertDetailsOverride:
+  alertDisplayNameFormat: "APT supply chain: {{DetectionType}} on {{DeviceName}}"
+  alertDescriptionFormat: "{{Detail}}"
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: wtfpkg-rules
+  support:
+    tier: Community
+  categories:
+    domains: ["Security - Others", "Supply Chain"]

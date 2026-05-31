@@ -1,0 +1,129 @@
+[metadata]
+creation_date = "2026/05/31"
+integration = ["endpoint", "auditd_manager"]
+maturity = "production"
+updated_date = "2026/05/31"
+
+[rule]
+author = ["wtfpkg-rules"]
+description = """
+Detects npm spawning network utilities or shells via lifecycle scripts (preinstall,
+postinstall, prepare) with network-indicator patterns in the child command line.
+The inner filter (HTTP URLs, /dev/tcp, base64, eval) distinguishes genuine supply
+chain attacks from legitimate build steps (node-gyp, webpack, esbuild downloads).
+Covers WTFpkg NPM-02. Notable real-world incidents: eslint-scope (2018),
+event-stream (2018), Axios (March 2026 — ~100M weekly downloads affected).
+Uses an EQL sequence correlating npm process to network-indicating child within
+a 15-second window to reduce false positives in busy CI/CD environments.
+"""
+false_positives = [
+  """npm packages that download platform-specific binaries (puppeteer, playwright,
+     esbuild). The command line filter requiring http/https or eval patterns
+     reduces these significantly, but some may still match. Allowlist by
+     process.parent.working_directory for known package node_modules paths.""",
+  """Custom monorepo build scripts that invoke curl in postinstall for asset
+     download — review and allowlist by exact process.command_line pattern."""
+]
+from = "now-9m"
+index = [
+  "logs-endpoint.events.process*",
+  "endgame-*",
+  "auditbeat-*"
+]
+language = "eql"
+license = "Elastic License v2"
+name = "npm Lifecycle Script Spawns Network or Shell Process"
+note = """
+## Triage and Response
+
+1. Identify the npm package: `process.parent.command_line` will show the npm
+   invocation. Check `process.parent.working_directory` for the node_modules path
+   to find which package triggered the script.
+2. Inspect the package.json scripts section: `cat node_modules/<package>/package.json | python3 -m json.tool | grep -A5 scripts`
+3. Check for the package on npm: `npm show <package> scripts` and review
+   the published version history for recent changes.
+4. If malicious, report to security@npmjs.com and consider using `npm unpublish`
+   guidance for affected versions.
+5. Check for persistence mechanisms: cron jobs created, systemd units, or
+   ~/.bashrc modifications in the installation time window.
+"""
+references = [
+  "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/npm-lifecycle-scripts.md",
+  "https://blog.npmjs.org/post/180565383195/details-about-the-event-stream-incident"
+]
+risk_score = 73
+rule_id = "6f6cf027-7259-4207-9834-2aa72e1f7da4"
+severity = "high"
+tags = [
+  "Domain: Endpoint",
+  "OS: Linux",
+  "OS: macOS",
+  "Use Case: Threat Detection",
+  "Use Case: Supply Chain",
+  "Tactic: Initial Access",
+  "Tactic: Execution",
+  "Data Source: Elastic Defend"
+]
+timestamp_override = "event.ingested"
+type = "eql"
+
+query = '''
+sequence by host.id, process.parent.entity_id with maxspan=15s
+  [process where event.action == "exec" and
+   process.name in ("node", "nodejs") and
+   process.command_line like~ ("*npm*")]
+  [process where event.action == "exec" and
+   process.name in ("curl", "wget", "bash", "sh", "nc", "ncat",
+                    "python", "python3", "perl") and
+   (
+     process.command_line like~ ("*http://*", "*https://*") or
+     process.command_line like~ ("*/dev/tcp/*", "*/dev/udp/*") or
+     process.command_line like~ ("*base64*", "*eval $(*", "* -e *")
+   ) and
+   not process.command_line like~ (
+     "*node-gyp*",
+     "*node_modules/.bin/*",
+     "*--prefix*"
+   )]
+'''
+
+[[rule.threat]]
+framework = "MITRE ATT&CK"
+
+[[rule.threat.technique]]
+id = "T1195"
+name = "Supply Chain Compromise"
+reference = "https://attack.mitre.org/techniques/T1195/"
+
+[[rule.threat.technique.subtechnique]]
+id = "T1195.001"
+name = "Compromise Software Dependencies and Development Tools"
+reference = "https://attack.mitre.org/techniques/T1195/001/"
+
+[rule.threat.tactic]
+id = "TA0001"
+name = "Initial Access"
+reference = "https://attack.mitre.org/tactics/TA0001/"
+
+[[rule.threat]]
+framework = "MITRE ATT&CK"
+
+[[rule.threat.technique]]
+id = "T1059"
+name = "Command and Scripting Interpreter"
+reference = "https://attack.mitre.org/techniques/T1059/"
+
+[[rule.threat.technique.subtechnique]]
+id = "T1059.004"
+name = "Unix Shell"
+reference = "https://attack.mitre.org/techniques/T1059/004/"
+
+[[rule.threat.technique.subtechnique]]
+id = "T1059.007"
+name = "JavaScript"
+reference = "https://attack.mitre.org/techniques/T1059/007/"
+
+[rule.threat.tactic]
+id = "TA0002"
+name = "Execution"
+reference = "https://attack.mitre.org/tactics/TA0002/"

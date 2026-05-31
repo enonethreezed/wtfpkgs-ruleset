@@ -1,0 +1,98 @@
+id: 1f6ba8f0-b9b7-4990-97bb-9b4dffb18da1
+name: APT/dpkg Maintainer Script Spawns Suspicious Child Process
+description: |
+  Detects APT or dpkg spawning network utilities (curl, wget), shells, or
+  interpreters as direct children during package installation. Maintainer
+  scripts (preinst, postinst, prerm, postrm) execute with root privileges;
+  legitimate scripts configure services or run ldconfig and do not initiate
+  outbound connections or spawn interactive shells.
+  This is a primary supply chain attack vector for .deb packages (WTFpkg APT-04).
+
+  Data source: Microsoft Defender for Endpoint (DeviceProcessEvents) or
+  Syslog-based Linux process telemetry via AMA.
+severity: High
+status: Available
+requiredDataConnectors:
+  - connectorId: MicrosoftDefenderAdvancedThreatProtection
+    dataTypes:
+      - DeviceProcessEvents
+  - connectorId: Syslog
+    dataTypes:
+      - Syslog
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - InitialAccess
+  - Execution
+relevantTechniques:
+  - T1195.001
+  - T1059.004
+query: |
+  DeviceProcessEvents
+  | where TimeGenerated > ago(1h)
+  | where InitiatingProcessFileName in~ ("apt-get", "apt", "dpkg")
+  | where FileName in~ ("bash", "sh", "dash", "curl", "wget", "nc",
+                        "ncat", "python", "python3", "perl", "ruby")
+  | where not (ProcessCommandLine has_any (
+      "update-alternatives", "ldconfig", "systemctl daemon-reload",
+      "mandb", "fc-cache", "gtk-update-icon-cache", "udevadm", "depmod",
+      "glib-compile-schemas"))
+  // Enrich with device context
+  | extend
+      InitiatingCmd = InitiatingProcessCommandLine,
+      ChildCmd = ProcessCommandLine,
+      AlertDetail = strcat("Package manager ", InitiatingProcessFileName,
+                           " spawned ", FileName, " on device ", DeviceName)
+  | project
+      TimeGenerated,
+      DeviceName,
+      AccountName,
+      AccountDomain,
+      InitiatingProcessFileName,
+      InitiatingCmd,
+      FileName,
+      ChildCmd,
+      ProcessId,
+      InitiatingProcessId,
+      AlertDetail
+  | order by TimeGenerated desc
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: FullName
+        columnName: DeviceName
+  - entityType: Account
+    fieldMappings:
+      - identifier: Name
+        columnName: AccountName
+      - identifier: NTDomain
+        columnName: AccountDomain
+  - entityType: Process
+    fieldMappings:
+      - identifier: ProcessId
+        columnName: ProcessId
+      - identifier: CommandLine
+        columnName: ChildCmd
+customDetails:
+  InitiatingProcess: InitiatingProcessFileName
+  InitiatingCommand: InitiatingCmd
+  SuspiciousChild: FileName
+  SuspiciousCommand: ChildCmd
+alertDetailsOverride:
+  alertDisplayNameFormat: "APT/dpkg spawned {{FileName}} on {{DeviceName}}"
+  alertDescriptionFormat: "Package manager {{InitiatingProcessFileName}} spawned suspicious process {{FileName}} (cmd: {{ChildCmd}}) on device {{DeviceName}}. Possible malicious maintainer script execution."
+  alertSeverityColumnName: null
+  alertTacticsColumnName: null
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: wtfpkg-rules
+  support:
+    tier: Community
+  categories:
+    domains: ["Security - Others", "Supply Chain"]

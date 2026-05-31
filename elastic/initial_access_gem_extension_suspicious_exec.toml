@@ -1,0 +1,117 @@
+[metadata]
+creation_date = "2026/05/31"
+integration = ["endpoint", "auditd_manager"]
+maturity = "production"
+updated_date = "2026/05/31"
+
+[rule]
+author = ["wtfpkg-rules"]
+description = """
+Detects ruby spawning network utilities or shells during gem installation through
+native extensions (extconf.rb), Rakefile-based extensions, or install hooks via
+rubygems_plugin.rb. Legitimate extension compilation invokes GCC/Make; it does
+not call curl or open shells with remote URLs.
+The rubygems_plugin.rb vector (GEM-02) is particularly dangerous because it
+transforms the package manager itself into a persistent execution hook: once
+installed, the hook fires on every subsequent gem install, regardless of which
+package is being installed.
+Covers WTFpkg GEM-01, GEM-02, GEM-03.
+Uses a sequence to require that the network/shell child spawns within 30 seconds
+of a gem install invocation to reduce false positives from unrelated ruby processes.
+"""
+false_positives = [
+  """Gems that use Rake to run standard build toolchains (configure, make) —
+     these will show make/gcc as children, not shells with network URLs.
+     The not filter excludes known compiler tools.""",
+  """Bundler running gems in development mode with complex install scripts.
+     Allowlist by process.working_directory for specific project directories."""
+]
+from = "now-9m"
+index = [
+  "logs-endpoint.events.process*",
+  "endgame-*",
+  "auditbeat-*"
+]
+language = "eql"
+license = "Elastic License v2"
+name = "RubyGems Extension or Install Hook Spawns Suspicious Process"
+note = """
+## Triage and Response
+
+1. Identify the gem: `process.parent.command_line` will show `gem install <name>`
+   or `bundle install`. If via bundler, check the Gemfile.lock for recently changed entries.
+2. Inspect the extension: `gem unpack <name> && cat <name>/ext/extconf.rb`
+   and `cat <name>/lib/rubygems_plugin.rb` if present.
+3. Check installed plugin hooks: `find $(gem environment gemdir) -name rubygems_plugin.rb -exec cat {} \\;`
+4. Look for persistence mechanisms installed during the window: LaunchAgents
+   (macOS), cron jobs (Linux), or .bashrc modifications.
+5. If the hook survived gem removal: manually delete residual rubygems_plugin.rb
+   from the gem installation directory.
+"""
+references = [
+  "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-native-extension.md",
+  "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-install-hooks.md",
+  "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/gem-build-script.md"
+]
+risk_score = 73
+rule_id = "474f5e03-499d-4356-9069-9d77b525e8fb"
+severity = "high"
+tags = [
+  "Domain: Endpoint",
+  "OS: Linux",
+  "OS: macOS",
+  "Use Case: Threat Detection",
+  "Use Case: Supply Chain",
+  "Tactic: Initial Access",
+  "Tactic: Execution",
+  "Tactic: Persistence",
+  "Data Source: Elastic Defend"
+]
+timestamp_override = "event.ingested"
+type = "eql"
+
+query = '''
+sequence by host.id, process.parent.entity_id with maxspan=30s
+  [process where event.action == "exec" and
+   process.name like~ ("ruby*") and
+   process.command_line like~ (
+     "*gem install*", "*bundle install*",
+     "*extconf.rb*", "*rubygems_plugin*"
+   )]
+  [process where event.action == "exec" and
+   process.name in ("curl", "wget", "bash", "sh", "nc", "ncat",
+                    "python", "python3") and
+   not process.name in ("gcc", "g++", "make", "cc", "ld", "ar",
+                        "cmake", "pkg-config")]
+'''
+
+[[rule.threat]]
+framework = "MITRE ATT&CK"
+
+[[rule.threat.technique]]
+id = "T1195"
+name = "Supply Chain Compromise"
+reference = "https://attack.mitre.org/techniques/T1195/"
+
+[[rule.threat.technique.subtechnique]]
+id = "T1195.001"
+name = "Compromise Software Dependencies and Development Tools"
+reference = "https://attack.mitre.org/techniques/T1195/001/"
+
+[rule.threat.tactic]
+id = "TA0001"
+name = "Initial Access"
+reference = "https://attack.mitre.org/tactics/TA0001/"
+
+[[rule.threat]]
+framework = "MITRE ATT&CK"
+
+[[rule.threat.technique]]
+id = "T1546"
+name = "Event Triggered Execution"
+reference = "https://attack.mitre.org/techniques/T1546/"
+
+[rule.threat.tactic]
+id = "TA0003"
+name = "Persistence"
+reference = "https://attack.mitre.org/tactics/TA0003/"

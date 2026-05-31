@@ -1,0 +1,83 @@
+name: Linux APT Installation with GPG Verification Bypass
+id: ee35881e-8842-4eec-95f3-f853635d3343
+version: 1
+date: '2026-05-31'
+author: wtfpkg-rules
+status: production
+type: TTP
+description: >
+  Detects execution of apt or apt-get with flags that disable GPG signature
+  verification (--allow-unauthenticated, --allow-insecure-repositories,
+  --no-check-valid-until). These flags bypass the cryptographic chain of trust
+  that APT uses to authenticate repository metadata and packages.
+  Legitimate automated pipelines in mature environments never require these flags;
+  their presence strongly indicates either misconfiguration or an adversary
+  attempting to install unsigned or malicious packages from an untrusted source
+  (WTFpkg APT-01). Also covers the trusted=yes pattern through a supplemental
+  search against apt configuration files.
+data_source:
+  - Sysmon for Linux EventID 1
+  - CrowdStrike Falcon Endpoint
+  - Elastic Endpoint
+search: >
+  | tstats `security_content_summariesonly` count min(_time) as firstTime max(_time) as lastTime
+    from datamodel=Endpoint.Processes
+    where Processes.process_name IN ("apt", "apt-get")
+      AND (Processes.process IN ("*--allow-unauthenticated*",
+                                  "*--allow-insecure-repositories*",
+                                  "*--no-check-valid-until*"))
+    by Processes.dest, Processes.user, Processes.process_name,
+       Processes.process, Processes.parent_process_name
+  | `drop_dm_object_name(Processes)`
+  | `security_content_ctime(firstTime)`
+  | `security_content_ctime(lastTime)`
+  | eval risk_message="APT bypass flag detected: ".process." on ".dest
+how_to_implement: >
+  Requires CIM-compliant endpoint telemetry with full command-line logging.
+  Ensure your EDR Add-on maps process command lines to Processes.process.
+  For the trusted=yes variant, supplement with a file-integrity search against
+  /etc/apt/sources.list and /etc/apt/sources.list.d/ using your FIM solution
+  and alert on entries containing the string "trusted=yes".
+known_false_positives: >
+  Legacy CI pipeline bootstrap scripts against air-gapped internal mirrors that
+  lack GPG keys — extremely rare in modern environments. Allowlist by dest (the
+  specific build machine) rather than suppressing the rule entirely.
+references:
+  - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/apt-gpg-bypass.md
+  - https://manpages.debian.org/bullseye/apt/apt-get.8.en.html
+tags:
+  analytic_story:
+    - Linux Supply Chain Compromise
+    - Linux Package Manager Abuse
+    - Defense Evasion
+  asset_type: Endpoint
+  confidence: 85
+  impact: 70
+  message: >
+    Process $process_name$ executed on $dest$ with GPG verification bypass flag.
+    Full command: $process$. User: $user$. Parent: $parent_process_name$.
+    This disables cryptographic authentication of packages (WTFpkg APT-01).
+  mitre_attack_id:
+    - T1195.001
+    - T1562.001
+  observable:
+    - name: dest
+      type: Hostname
+      role:
+        - Victim
+    - name: user
+      type: User
+      role:
+        - Victim
+  product:
+    - Splunk Enterprise Security
+    - Splunk Cloud
+  required_fields:
+    - _time
+    - Processes.dest
+    - Processes.user
+    - Processes.process_name
+    - Processes.process
+    - Processes.parent_process_name
+  risk_score: 60
+  security_domain: endpoint

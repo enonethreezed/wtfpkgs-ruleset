@@ -1,0 +1,126 @@
+[metadata]
+creation_date = "2026/05/31"
+integration = ["endpoint", "auditd_manager"]
+maturity = "production"
+updated_date = "2026/05/31"
+
+[rule]
+author = ["wtfpkg-rules"]
+description = """
+Detects APT or dpkg spawning network utilities (curl, wget), shells, or interpreters
+as direct children during package installation. Maintainer scripts (preinst, postinst,
+prerm, postrm) run with root privileges and are a primary supply chain attack vector
+for .deb packages. Legitimate scripts configure services or run ldconfig; they do not
+initiate outbound connections or spawn interactive shells.
+Covers WTFpkg technique APT-04.
+"""
+false_positives = [
+  """Third-party .deb packages with non-standard postinst logic that legitimately
+     invokes shells for service configuration. Allowlist by process.executable path
+     after manual review of the specific package's maintainer scripts.""",
+  """Configuration management agents (Ansible, Chef, Puppet) running dpkg inside
+     their own process trees — allowlist by process.parent.parent.executable."""
+]
+from = "now-9m"
+index = [
+  "logs-endpoint.events.process*",
+  "endgame-*",
+  "auditbeat-*"
+]
+language = "eql"
+license = "Elastic License v2"
+name = "APT/dpkg Maintainer Script Spawns Suspicious Child Process"
+note = """
+## Triage and Response
+
+1. Identify the package being installed: check `process.parent.args` for the dpkg/apt
+   command line and extract the package name.
+2. Inspect the maintainer script: `dpkg-deb -e <package>.deb /tmp/ctrl && cat /tmp/ctrl/postinst`
+3. Review installed scripts in `/var/lib/dpkg/info/<package>.postinst` for suspicious content.
+4. Check for any files created, network connections made, or cron jobs added during
+   the installation time window.
+5. If malicious: quarantine the host, remove the package, and report to the package
+   registry if the package was sourced from a public mirror.
+
+## Investigation Notes
+
+- The parent process command line should show a package installation context
+  (`apt-get install`, `dpkg --install`, `dpkg --configure`).
+- Legitimate postinst scripts that call shells pass specific arguments
+  (update-alternatives, adduser, systemctl). Generic `bash -c <url>` patterns
+  are strongly malicious.
+"""
+references = [
+  "https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/apt-preinst-postinst-scripts.md",
+  "https://www.debian.org/doc/debian-policy/ch-maintainerscripts.html"
+]
+risk_score = 73
+rule_id = "36665da9-930b-4257-9a5b-1addecdf9764"
+severity = "high"
+tags = [
+  "Domain: Endpoint",
+  "OS: Linux",
+  "Use Case: Threat Detection",
+  "Use Case: Supply Chain",
+  "Tactic: Initial Access",
+  "Tactic: Execution",
+  "Data Source: Elastic Defend",
+  "Data Source: Auditd Manager"
+]
+timestamp_override = "event.ingested"
+type = "eql"
+
+query = '''
+process where event.action == "exec" and
+  event.dataset in ("endpoint.events.process", "auditd.log") and
+  process.parent.name in ("apt-get", "apt", "dpkg") and
+  process.name in ("bash", "sh", "dash", "curl", "wget", "nc", "ncat",
+                   "python", "python3", "perl", "ruby") and
+  not process.command_line like~ (
+    "*update-alternatives*",
+    "*ldconfig*",
+    "*systemctl daemon-reload*",
+    "*mandb*",
+    "*fc-cache*",
+    "*gtk-update-icon-cache*",
+    "*udevadm*",
+    "*depmod*",
+    "*glib-compile-schemas*"
+  )
+'''
+
+[[rule.threat]]
+framework = "MITRE ATT&CK"
+
+[[rule.threat.technique]]
+id = "T1195"
+name = "Supply Chain Compromise"
+reference = "https://attack.mitre.org/techniques/T1195/"
+
+[[rule.threat.technique.subtechnique]]
+id = "T1195.001"
+name = "Compromise Software Dependencies and Development Tools"
+reference = "https://attack.mitre.org/techniques/T1195/001/"
+
+[rule.threat.tactic]
+id = "TA0001"
+name = "Initial Access"
+reference = "https://attack.mitre.org/tactics/TA0001/"
+
+[[rule.threat]]
+framework = "MITRE ATT&CK"
+
+[[rule.threat.technique]]
+id = "T1059"
+name = "Command and Scripting Interpreter"
+reference = "https://attack.mitre.org/techniques/T1059/"
+
+[[rule.threat.technique.subtechnique]]
+id = "T1059.004"
+name = "Unix Shell"
+reference = "https://attack.mitre.org/techniques/T1059/004/"
+
+[rule.threat.tactic]
+id = "TA0002"
+name = "Execution"
+reference = "https://attack.mitre.org/tactics/TA0002/"

@@ -1,0 +1,36 @@
+title: cargo install from Git URL Without Commit Pin
+id: 0665c4a7-9902-4621-b715-a1ef2f9b1154
+status: experimental
+description: |
+    Detects cargo install invocations using --git without a --rev commit hash.
+    Unpinned git dependencies allow an attacker who controls or compromises the
+    remote repository to silently inject malicious build.rs or proc-macro code
+    on the next cargo run. Particularly dangerous in CI/CD environments with
+    elevated credentials.
+references:
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/cargo-install-git.md
+author: wtfpkg-rules
+date: 2026-05-31
+tags:
+    - attack.initial_access
+    - attack.t1195.001
+    - attack.execution
+    - attack.t1059.004
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection_cargo_git:
+        Image|endswith: '/cargo'
+        CommandLine|contains|all:
+            - 'install'
+            - '--git'
+    filter_pinned:
+        CommandLine|contains:
+            - '--rev '
+            - '--tag '
+    condition: selection_cargo_git and not filter_pinned
+falsepositives:
+    - Developer one-off experiments using --git without pin (acceptable on
+      developer workstations; should be blocked in CI/CD)
+level: medium

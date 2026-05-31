@@ -1,0 +1,61 @@
+title: npm Lifecycle Script Spawns Suspicious Process
+id: 072e6af5-5760-4172-833d-c8897e157d30
+status: experimental
+description: |
+    Detects npm spawning network utilities, shells, or unexpected interpreters via
+    lifecycle scripts (preinstall, install, postinstall, prepare). Legitimate
+    postinstall scripts run build steps or patch binaries; they do not establish
+    outbound connections or spawn root shells. Covers Linux and macOS.
+references:
+    - https://github.com/0xv1n/WTFpkg/blob/main/content/techniques/npm-lifecycle-scripts.md
+    - https://docs.npmjs.com/cli/v10/using-npm/scripts
+author: wtfpkg-rules
+date: 2026-05-31
+tags:
+    - attack.initial_access
+    - attack.t1195.001
+    - attack.execution
+    - attack.t1059.004
+logsource:
+    category: process_creation
+    product: linux
+detection:
+    selection_parent:
+        ParentImage|endswith:
+            - '/node'
+            - '/nodejs'
+        ParentCommandLine|contains:
+            - 'npm'
+    selection_susp_child:
+        Image|endswith:
+            - '/curl'
+            - '/wget'
+            - '/bash'
+            - '/sh'
+            - '/nc'
+            - '/ncat'
+            - '/python'
+            - '/python3'
+            - '/perl'
+            - '/socat'
+        # Narrow further: outbound indicators in the command line
+        CommandLine|contains:
+            - 'http://'
+            - 'https://'
+            - '/dev/tcp'
+            - '/dev/udp'
+            - ' -e '
+            - 'base64'
+            - 'eval '
+    filter_known_build_steps:
+        # node-gyp rebuilds are legitimate: they compile native addons
+        CommandLine|contains:
+            - 'node-gyp'
+            - 'node_modules/.bin/'
+            - '--prefix'
+    condition: selection_parent and selection_susp_child and not filter_known_build_steps
+falsepositives:
+    - Packages that download platform-specific binaries (e.g., esbuild, puppeteer)
+      via postinstall — these should be whitelisted by package name in the SIEM
+    - Electron app packaging scripts that invoke curl to download assets
+level: high
